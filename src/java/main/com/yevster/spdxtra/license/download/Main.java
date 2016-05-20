@@ -1,14 +1,12 @@
 package com.yevster.spdxtra.license.download;
 
-import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.OutputStream;
 import java.nio.file.Files;
-import java.nio.file.OpenOption;
 import java.nio.file.Path;
 import java.nio.file.Paths;
-import java.util.Optional;
 
+import org.apache.commons.lang3.StringUtils;
 import org.apache.http.HttpResponse;
 import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpGet;
@@ -23,12 +21,9 @@ import org.apache.jena.rdf.model.RDFNode;
 import org.apache.jena.rdf.model.Resource;
 import org.apache.jena.riot.Lang;
 import org.apache.jena.riot.RDFDataMgr;
-import org.apache.jena.riot.RDFFormat;
-import org.apache.jena.riot.writer.RDFJSONWriter;
 
-import com.yevster.spdxtra.LicenseList;
 import com.yevster.spdxtra.LicenseList.LicenseRetrievalException;
-import com.yevster.spdxtra.license.download.LicenseListProperties;
+import com.yevster.spdxtra.LicenseList.ListedLicense;
 import com.yevster.spdxtra.util.MiscUtils;
 
 import net.rootdev.javardfa.jena.RDFaReader.HTMLRDFaReader;
@@ -78,17 +73,25 @@ public class Main {
 			MiscUtils.toLinearStream(fetchedLicenseListModel.listObjectsOfProperty(LicenseListProperties.LICENSE_ID))
 					.map(RDFNode::asLiteral).map(Literal::getString)
 					// Got the license ID, get the license:
-					.sorted(String::compareToIgnoreCase).peek(licenseId -> System.out.println("Downloading license " + licenseId))
-					.map(LicenseList.INSTANCE::getListedLicenseById).map(Optional::get) 
-					.forEach(license -> {
-						// Avoid DOSing the server
-						try {
-							Thread.sleep(1000);
-						} catch (Exception e) {
-						}
+					.sorted(String::compareToIgnoreCase)
+					.peek(licenseId -> System.out.println("Downloading license " + licenseId))
+					.map(Main::getListedLicenseById)
+					// Got the resource. Now, let's extract the parts we care
+					// about by building up a license.
+					.map(PopulatingListedLicense::new)
+					// And write it as an RDF node as we would to an SPDX
+					// document. This will preserve only the important
+					// properties, and discard the fluff.
+					.sequential().forEach(license -> {
 						licenseListResource.addProperty(LicenseListProperties.LICENSE,
 								license.getRdfNode(licenseDataSet.getDefaultModel()));
+						// Wait a bit to keep from DOSing the server.
+						try {
+							Thread.sleep(1000);
+						} catch (InterruptedException ie) {
+						}
 					});
+			;
 			try (OutputStream out = Files.newOutputStream(targetFile)) {
 				RDFDataMgr.write(out, licenseDataSet, Lang.RDFTHRIFT);
 			}
@@ -97,5 +100,43 @@ public class Main {
 			throw new LicenseRetrievalException("Error accessing " + accessUrl, e);
 		}
 
+	}
+
+	private static final class PopulatingListedLicense extends ListedLicense {
+		public PopulatingListedLicense(Resource r) {
+			super(r);
+		}
+	}
+
+	private static Resource getListedLicenseById(String id) {
+		// Verify arguments
+		if (StringUtils.isBlank(id)) {
+			throw new IllegalArgumentException("Cannot get listed license with null or empty id");
+		} // For security
+		if (StringUtils.containsAny(id, '/', ':')) {
+			throw new IllegalArgumentException("Illegal characters in id " + id);
+		}
+
+		String licenseUri = LICENSE_LIST_URL + id;
+
+		try {
+			Model model = ModelFactory.createDefaultModel();
+			HttpClient httpClient = new DefaultHttpClient();
+			HttpUriRequest request = new HttpGet(licenseUri);
+			HttpResponse response = httpClient.execute(request);
+
+			if (response.getStatusLine().getStatusCode() != 200) {
+				throw new LicenseRetrievalException("Error accessing " + licenseUri + ". Status returned: "
+						+ response.getStatusLine().getStatusCode() + ". Reason:"
+						+ response.getStatusLine().getReasonPhrase());
+			}
+
+			new HTMLRDFaReader().read(model, response.getEntity().getContent(), "http://www.w3.org/1999/xhtml:html");
+
+			Resource foundLicense = model.listSubjects().next();
+			return foundLicense;
+		} catch (IOException e) {
+			throw new LicenseRetrievalException("Error accessing " + licenseUri, e);
+		}
 	}
 }
