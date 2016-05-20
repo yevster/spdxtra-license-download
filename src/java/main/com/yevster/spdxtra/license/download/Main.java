@@ -12,18 +12,25 @@ import org.apache.http.client.HttpClient;
 import org.apache.http.client.methods.HttpGet;
 import org.apache.http.client.methods.HttpUriRequest;
 import org.apache.http.impl.client.DefaultHttpClient;
+import org.apache.jena.iri.IRIFactory;
 import org.apache.jena.query.Dataset;
 import org.apache.jena.query.DatasetFactory;
+import org.apache.jena.query.ReadWrite;
 import org.apache.jena.rdf.model.Literal;
 import org.apache.jena.rdf.model.Model;
 import org.apache.jena.rdf.model.ModelFactory;
 import org.apache.jena.rdf.model.RDFNode;
 import org.apache.jena.rdf.model.Resource;
+import org.apache.jena.rdf.model.ResourceFactory;
 import org.apache.jena.riot.Lang;
 import org.apache.jena.riot.RDFDataMgr;
+import org.apache.jena.riot.RDFFormat;
+import org.apache.jena.riot.RiotWriter;
 
-import com.yevster.spdxtra.LicenseList.LicenseRetrievalException;
 import com.yevster.spdxtra.LicenseList.ListedLicense;
+import com.yevster.spdxtra.Read;
+import com.yevster.spdxtra.SpdxProperties;
+import com.yevster.spdxtra.SpdxUris;
 import com.yevster.spdxtra.util.MiscUtils;
 
 import net.rootdev.javardfa.jena.RDFaReader.HTMLRDFaReader;
@@ -57,19 +64,20 @@ public class Main {
 				throw new LicenseRetrievalException(
 						"Error accessing " + LICENSE_LIST_URL + ". Status: " + response.getStatusLine().toString());
 			}
+
+			licenseDataSet.getDefaultModel().getGraph().getPrefixMapping().setNsPrefix("spdx", SpdxUris.SPDX_TERMS);
 			// Read the RDFa into an in-memory RDF model.
 			new HTMLRDFaReader().read(fetchedLicenseListModel, response.getEntity().getContent(),
 					"http://www.w3.org/1999/xhtml:html");
 			String licenseListVersion = fetchedLicenseListModel
 					.listObjectsOfProperty(LicenseListProperties.LICENSE_LIST_VERSION).next().asLiteral().getString();
-
+			System.out.println("License list version "+licenseListVersion);
 			// Create the license list, set the version.
 			Resource licenseListResource = licenseDataSet.getDefaultModel().createResource(LICENSE_LIST_URL);
-			licenseListResource.addProperty(LicenseListProperties.LICENSE_LIST_VERSION, licenseListVersion);
+			licenseListResource.addLiteral(LicenseListProperties.LICENSE_LIST_VERSION, licenseListVersion);
 
 			// For each retrieved license ID, fetch that license and add to the
-			// saved license list.
-			// SPDXtra already has code to do this.
+			// saved license list. SPDXtra already has code to do this.
 			MiscUtils.toLinearStream(fetchedLicenseListModel.listObjectsOfProperty(LicenseListProperties.LICENSE_ID))
 					.map(RDFNode::asLiteral).map(Literal::getString)
 					// Got the license ID, get the license:
@@ -78,13 +86,13 @@ public class Main {
 					.map(Main::getListedLicenseById)
 					// Got the resource. Now, let's extract the parts we care
 					// about by building up a license.
-					.map(PopulatingListedLicense::new)
 					// And write it as an RDF node as we would to an SPDX
 					// document. This will preserve only the important
 					// properties, and discard the fluff.
-					.sequential().forEach(license -> {
-						licenseListResource.addProperty(LicenseListProperties.LICENSE,
-								license.getRdfNode(licenseDataSet.getDefaultModel()));
+					.sequential()
+						.forEach(license -> {
+						licenseListResource.addProperty(SpdxProperties.LICENSE_LIST_LICENSE,
+							license.getRdfNodeFull(licenseDataSet.getDefaultModel()));
 						// Wait a bit to keep from DOSing the server.
 						try {
 							Thread.sleep(1000);
@@ -92,9 +100,11 @@ public class Main {
 						}
 					});
 			;
+
 			try (OutputStream out = Files.newOutputStream(targetFile)) {
 				RDFDataMgr.write(out, licenseDataSet, Lang.RDFTHRIFT);
 			}
+
 
 		} catch (IOException e) {
 			throw new LicenseRetrievalException("Error accessing " + accessUrl, e);
@@ -106,9 +116,21 @@ public class Main {
 		public PopulatingListedLicense(Resource r) {
 			super(r);
 		}
+		
 	}
 
-	private static Resource getListedLicenseById(String id) {
+	public static class LicenseRetrievalException extends RuntimeException {
+
+		public LicenseRetrievalException(String s, Throwable cause) {
+			super(s, cause);
+		}
+
+		public LicenseRetrievalException(String s) {
+			super(s);
+		}
+	}
+
+	private static PopulatingListedLicense getListedLicenseById(String id) {
 		// Verify arguments
 		if (StringUtils.isBlank(id)) {
 			throw new IllegalArgumentException("Cannot get listed license with null or empty id");
@@ -134,7 +156,7 @@ public class Main {
 			new HTMLRDFaReader().read(model, response.getEntity().getContent(), "http://www.w3.org/1999/xhtml:html");
 
 			Resource foundLicense = model.listSubjects().next();
-			return foundLicense;
+			return new PopulatingListedLicense(foundLicense);
 		} catch (IOException e) {
 			throw new LicenseRetrievalException("Error accessing " + licenseUri, e);
 		}

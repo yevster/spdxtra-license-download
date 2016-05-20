@@ -9,6 +9,5 @@ public class LicenseListProperties {
 	
 	public static final Property LICENSE_ID = new PropertyImpl(SpdxUris.SPDX_TERMS, "licenseId");
 	public static final Property LICENSE_LIST_VERSION = new PropertyImpl(SpdxUris.SPDX_TERMS, "licenseListVersion");
-	public static final Property LICENSE = new PropertyImpl("Spdxtra", "license");
 
 }
