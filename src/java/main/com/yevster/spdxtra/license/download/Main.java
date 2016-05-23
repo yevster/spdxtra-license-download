@@ -121,6 +121,8 @@ public class Main {
 
 	public static class LicenseRetrievalException extends RuntimeException {
 
+		private static final long serialVersionUID = -638212004386585080L;
+
 		public LicenseRetrievalException(String s, Throwable cause) {
 			super(s, cause);
 		}

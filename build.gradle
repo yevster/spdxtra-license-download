@@ -1,18 +1,21 @@
+plugins{
+    id 'java'
+    id 'application'
+    id 'maven'
+    id 'com.github.johnrengelman.shadow' version '1.2.3'
+}
+
 group 'com.yevster'
-version '0.1-SNAPSHOT'
-
-
-
-apply plugin: 'java'
+version '0.5'
 
 sourceCompatibility = 1.8
+
+mainClassName = 'com.yevster.spdxtra.license.download.Main'
 
 repositories {
     mavenCentral()
     maven {
         url "http://dl.bintray.com/yevster/maven"
-        artifactUrls 'https://bintray.com/artifact/download/yevster/maven/'
-        url "https://jitpack.io" 
     }
 }
 
@@ -24,13 +27,21 @@ sourceSets {
     }
 }
 
+jar{
+    manifest {
+        attributes('Implementation-Title': "$rootProject.name", 'Implementation-Version': version, 'Main-Class': mainClassName)
+    }
+    baseName = "$rootProject.name"
+}
+
+task sourcesJar(type: Jar, dependsOn: classes) {
+    classifier = 'sources'
+    from sourceSets.main.allSource
+}
+
 dependencies {
-  
-     runtime 'org.apache.jena:apache-jena-libs:3.0.1'
-     compile 'com.github.yevster:spdxtra:e7e71f048d'
-   	// TODO: Return this once 0.5 is released and lose jitpack
-   	// compile 'com.yevster:spdxtra:0.5'
-   	
-    compile 'com.yevster.net.rootdev:java-rdfa:0.4.3'
-    testCompile group: 'junit', name: 'junit', version: '4.11'
+	runtime group: 'org.apache.httpcomponents', name: 'httpclient', version: '4.2'
+    	compile 'com.yevster:spdxtra:0.5'   	
+	compile 'com.yevster.net.rootdev:java-rdfa:0.4.3'
+	testCompile group: 'junit', name: 'junit', version: '4.11'
 }
